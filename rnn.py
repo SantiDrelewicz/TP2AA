@@ -374,57 +374,51 @@ class RNNPunctuationCapitalizationModel:
 
     def predict_to_csv_from_dataframe(self, input_df: pd.DataFrame, output_file: str = "predictions.csv") -> pd.DataFrame:
         """
-        Predict on a CSV-like dataframe (with instancia_id, token_id, token)
-        and save predictions to new CSV in required format.
+        Predicts on a dataframe with columns instancia_id, token_id, token
+        and outputs the same structure with predicted punt_inicial, punt_final, capitalización
         """
         if not self.is_fitted:
             raise ValueError("Model must be trained before prediction")
 
-        # Group the tokens into sentences
-        sentences = []
-        instance_ids = []
-        for inst_id, group in input_df.groupby("instancia_id"):
-            sentence = " ".join(group["token"].tolist())
-            sentences.append(sentence)
-            instance_ids.append(inst_id)
-
-        # Run predictions
         self.model.eval()
         all_preds = []
 
-        for inst_id, sentence in zip(instance_ids, sentences):
-            tokens = self.tokenizer.tokenize(sentence.lower())
-            input_ids = torch.tensor([self.tokenizer.convert_tokens_to_ids(tokens)], device=self.device)
+        for idx, row in input_df.iterrows():
+            inst_id = row["instancia_id"]
+            token_id = row["token_id"]
+            token = row["token"]
+
+            # NO further tokenization — treat this token exactly as given
+            token_id_bert = self.tokenizer.convert_tokens_to_ids(token)
+            input_ids = torch.tensor([[token_id_bert]], device=self.device)  # Shape [1,1]
 
             with torch.no_grad():
                 init_logits, final_logits, cap_logits = self.model(input_ids)
 
-            init_pred = init_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
-            final_pred = final_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
-            cap_pred = cap_logits.argmax(dim=-1).cpu().tolist()
+            # Each logits is [1, 1, num_classes]
+            i_p = init_logits.argmax(dim=-1).item()
+            f_p = final_logits.argmax(dim=-1).item()
+            c_p = cap_logits.argmax(dim=-1).item()
 
-            # Re-tokenize with wordpiece for alignment
-            subtokens = self.tokenizer.convert_ids_to_tokens(input_ids.squeeze(0).cpu().tolist())
+            punt_inicial = self.idx_map_init[i_p]
+            punt_final = self.idx_map_final[f_p]
 
-            for token_idx, (sub, i_p, f_p, c_p) in enumerate(zip(subtokens, init_pred, final_pred, cap_pred)):
-                # CSV requires comma in quotes
-                final_symbol = self.idx_map_final[f_p]
-                if final_symbol == ",":
-                    final_symbol = '","'
+            # Ensure comma is in quotes
+            if punt_final == ",":
+                punt_final = '","'
 
-                all_preds.append({
-                    "instancia_id": inst_id,
-                    "token_id": token_idx,
-                    "token": sub,
-                    "punt_inicial": self.idx_map_init[i_p],
-                    "punt_final": final_symbol,
-                    "capitalización": c_p,
-                })
+            all_preds.append({
+                "instancia_id": inst_id,
+                "token_id": token_id,
+                "token": token,
+                "punt_inicial": punt_inicial,
+                "punt_final": punt_final,
+                "capitalización": c_p,
+            })
 
         output_df = pd.DataFrame(all_preds)
         output_df.to_csv(output_file, index=False)
         print(f"Wrote predictions to {output_file}")
-
         return output_df
 
     def predict_and_reconstruct(self, raw_sentence: str) -> str:

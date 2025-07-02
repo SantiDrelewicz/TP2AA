@@ -17,7 +17,7 @@ def main(mode: str, which: str):
         "es_419_validas.txt",
         train_ratio=0.8,
         val_ratio=0.1,
-        max_lines=80000
+        max_lines=1000
     )
 
     if mode == "train":
