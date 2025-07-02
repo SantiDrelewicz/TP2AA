@@ -63,7 +63,7 @@ def main(mode: str, which: str):
             output_csv = "predicted_output.csv"
 
             input_df = pd.read_csv(input_csv)
-            rnn_model.predict_to_csv_from_dataframe(input_df, output_file=output_csv)
+            rnn_model.predict_and_fill_csv(input_df, output_file=output_csv)
 
     else:
         raise ValueError(f"Unknown mode: {mode}. Use 'train' or 'test'.")

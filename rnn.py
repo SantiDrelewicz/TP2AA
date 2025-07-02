@@ -49,7 +49,7 @@ class JointPunctCapitalModel(nn.Module):
         num_cap: int,
         n_layers: int = 1,
         dropout: float = 0.3,
-        bidirectional: bool = True,
+        bidirectional: bool = True,     
     ):
         super().__init__()
         self.bidirectional = bidirectional
@@ -98,7 +98,7 @@ class RNNPunctuationCapitalizationModel:
         lr_scheduler_patience: int = 2,
         early_stopping_patience: int = 3,
         batch_size: int = 128,
-        bidirectional: bool = True,
+        bidirectional: bool = True,         
         device: Optional[torch.device] = None,
     ):
         self.tokenizer = BertTokenizer.from_pretrained("google-bert/bert-base-multilingual-cased")
@@ -113,34 +113,34 @@ class RNNPunctuationCapitalizationModel:
         self.batch_size = batch_size
         self.bidirectional = bidirectional
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+        
         # Model parameters
         self.num_init = 2
         self.num_final = 4
         self.num_cap = 4
-
+        
         # Model and training components
         self.model = None
         self.optimizer = None
         self.scheduler = None
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
         self.is_fitted = False
-
+        
         # Label mappings
         self.idx_map_init = {0: "", 1: "¿"}
         self.idx_map_final = {0: "", 1: ".", 2: "?", 3: ","}
 
     def _prepare_data(self, raw_sentences: List[str]) -> List[Dict]:
         """Process raw sentences and prepare training data"""
-
+        
         data = []
         instances = []
-
+        
         for inst_id, sentence in enumerate(raw_sentences, start=1):
             words, init_lbls, final_lbls, cap_lbls = extract_labels(sentence)
             token_idx = 0
             inst_data = []
-
+            
             for word, init_lbl, final_lbl, cap_lbl in zip(
                 words, init_lbls, final_lbls, cap_lbls
             ):
@@ -152,12 +152,12 @@ class RNNPunctuationCapitalizationModel:
                     punct_final = final_lbl if i == len(subtokens) - 1 else ""
                     inst_data.append([inst_id, token_idx, sub, punct_init, punct_final, cap_lbl])
                     token_idx += 1
-
+            
             if inst_id % 50_000 == 0:
                 print(f"… processed {inst_id} sentences")
-
+            
             data.extend(inst_data)
-
+        
         # Convert to DataFrame and process
         df = pd.DataFrame(
             data,
@@ -170,7 +170,7 @@ class RNNPunctuationCapitalizationModel:
                 "capitalizacion",
             ],
         )
-
+        
         # Convert token strings to BERT token IDs
         df["token_id_bert"] = self.tokenizer.convert_tokens_to_ids(df["token"].tolist())
 
@@ -193,15 +193,15 @@ class RNNPunctuationCapitalizationModel:
     def _create_data_loaders(self, train_data: List[Dict], val_data: List[Dict]) -> Tuple[DataLoader, DataLoader]:
         """Create PyTorch data loaders"""
         train_loader = DataLoader(
-            PunctCapitalDataset(train_data),
-            batch_size=self.batch_size,
-            shuffle=True,
+            PunctCapitalDataset(train_data), 
+            batch_size=self.batch_size, 
+            shuffle=True, 
             collate_fn=collate_fn
         )
         val_loader = DataLoader(
-            PunctCapitalDataset(val_data),
-            batch_size=self.batch_size,
-            shuffle=False,
+            PunctCapitalDataset(val_data), 
+            batch_size=self.batch_size, 
+            shuffle=False, 
             collate_fn=collate_fn
         )
         return train_loader, val_loader
@@ -212,10 +212,10 @@ class RNNPunctuationCapitalizationModel:
         train_instances = self._prepare_data(training_data)
         print("Processing validation data...")
         val_instances = self._prepare_data(validation_data)
-
+        
         # Create data loaders
         train_loader, val_loader = self._create_data_loaders(train_instances, val_instances)
-
+        
         # Initialize model
         vocab_size = self.tokenizer.vocab_size
         self.model = JointPunctCapitalModel(
@@ -229,7 +229,7 @@ class RNNPunctuationCapitalizationModel:
             dropout=self.dropout,
             bidirectional=self.bidirectional,
         ).to(self.device)
-
+        
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
@@ -243,7 +243,7 @@ class RNNPunctuationCapitalizationModel:
 
         print(f"Training on {self.device}")
         print(f"Train instances: {len(train_instances)}, Val: {len(val_instances)}")
-
+        
         # Training loop
         scaler = GradScaler("cuda")
 
@@ -251,7 +251,7 @@ class RNNPunctuationCapitalizationModel:
             self.model.train()
             running_loss = 0.0
             n_batches = 0
-
+            
             for input_ids, init_labs, final_labs, cap_labs in train_loader:
                 input_ids = input_ids.to(self.device)
                 init_labs = init_labs.to(self.device)
@@ -293,7 +293,7 @@ class RNNPunctuationCapitalizationModel:
                 if patience_counter >= self.early_stopping_patience:
                     print(f"Early stopping triggered at epoch {epoch}.")
                     break
-
+            
         self.is_fitted = True
         print("Training completed!")
 
@@ -362,119 +362,68 @@ class RNNPunctuationCapitalizationModel:
             all_cap_trues, all_cap_preds,
             labels=[0, 1, 2, 3], target_names=["lower", "Initial", "Mixed", "ALLCAP"], zero_division=0,
         ))
-
+        
         return avg_val_loss
 
     def predict(self, text: str):
         """Predict punctuation and capitalization for input text"""
         if not self.is_fitted:
             raise ValueError("Model must be trained before prediction")
-
+        
         return self.predict_and_reconstruct(text)
 
-    def predict_to_csv_from_dataframe(self, input_df: pd.DataFrame, output_file: str = "predictions.csv") -> pd.DataFrame:
+    def predict_and_fill_csv(self, input_df: pd.DataFrame, output_file: str = "predicted.csv") -> pd.DataFrame:
         """
-        Predicts on a dataframe with columns instancia_id, token_id, token
-        and outputs the same structure with predicted punt_inicial, punt_final, capitalización
+        Takes a dataframe with columns: instancia_id, token_id, token
+        Returns a new dataframe with added columns:
+        punt_inicial, punt_final, capitalización
+        One row per *input token* (same granularity).
         """
-        if not self.is_fitted:
-            raise ValueError("Model must be trained before prediction")
+        import pandas as pd
+        import torch
 
-        self.model.eval()
-        all_preds = []
-
+        results = []
         tokenizer_fast = self.tokenizer_fast
+        device = self.device
 
-        # Group by sentence (instancia_id)
         for instancia_id, group in input_df.groupby("instancia_id"):
+            # 1. Get the *input tokens exactly as they appear* (these are already subword tokens)
             tokens = group["token"].tolist()
 
-            # Reconstruct sentence text (needed so BertTokenizerFast can align words)
-            sentence = self.tokenizer.convert_tokens_to_string(tokens)
+            # 2. Convert tokens to IDs using tokenizer's vocab
+            input_ids = tokenizer_fast.convert_tokens_to_ids(tokens)
+            input_ids_tensor = torch.tensor([input_ids], device=device)
 
-            # Tokenize with word_ids
-            enc = tokenizer_fast(
-                sentence.lower().split(),
-                is_split_into_words=True,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-            )
-
-            input_ids = enc["input_ids"].to(self.device)
-            word_ids = enc.word_ids(batch_index=0)  # subtoken -> word mapping
-
-            # Model forward
+            # 3. Predict
+            self.model.eval()
             with torch.no_grad():
-                init_logits, final_logits, cap_logits = self.model(input_ids)
+                init_logits, final_logits, cap_logits = self.model(input_ids_tensor)
 
+            # 4. Get predictions per token
             init_pred = init_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
             final_pred = final_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
             cap_pred = cap_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
 
-            # Aggregate predictions per word
-            word_preds = {}
-            cur_word_idx = None
-            cur_init = 0
-            cur_final = 0
-            cur_cap = 0
+            # 5. Decode label indices
+            punt_inicial = [self.idx_map_init[idx] for idx in init_pred]
+            punt_final = [self.idx_map_final[idx] for idx in final_pred]
+            capitalizacion = cap_pred  # leave as integers or map if you want
 
-            for i, wid in enumerate(word_ids):
-                if wid is None:
-                    continue
+            # 6. Build output dataframe for this group
+            predicted_group = group.copy()
+            predicted_group["punt_inicial"] = punt_inicial
+            predicted_group["punt_final"] = punt_final
+            predicted_group["capitalización"] = capitalizacion
 
-                if wid != cur_word_idx:
-                    # flush previous word if any
-                    if cur_word_idx is not None:
-                        word_preds[cur_word_idx] = {
-                            "punt_inicial": self.idx_map_init[cur_init],
-                            "punt_final": self.idx_map_final[cur_final],
-                            "capitalización": cur_cap,
-                        }
-                    # new word
-                    cur_word_idx = wid
-                    cur_init = init_pred[i]
-                    cur_final = final_pred[i]
-                    cur_cap = cap_pred[i]
-                else:
-                    # continuing same word
-                    cur_final = final_pred[i]
-                    # we keep cur_init and cur_cap from first subtoken
+            results.append(predicted_group)
 
-            # flush last word
-            if cur_word_idx is not None:
-                word_preds[cur_word_idx] = {
-                    "punt_inicial": self.idx_map_init[cur_init],
-                    "punt_final": self.idx_map_final[cur_final],
-                    "capitalización": cur_cap,
-                }
+        # Concatenate all
+        final_df = pd.concat(results, ignore_index=True)
 
-            # Map predictions back to original rows
-            for _, row in group.iterrows():
-                wid = row["token_id"]
-                pred = word_preds.get(wid, {
-                    "punt_inicial": "",
-                    "punt_final": "",
-                    "capitalización": 0
-                })
+        if output_file:
+            final_df.to_csv(output_file, index=False)
 
-                punt_final = pred["punt_final"]
-                if punt_final == ",":
-                    punt_final = '","'
-
-                all_preds.append({
-                    "instancia_id": row["instancia_id"],
-                    "token_id": row["token_id"],
-                    "token": row["token"],
-                    "punt_inicial": pred["punt_inicial"],
-                    "punt_final": punt_final,
-                    "capitalización": pred["capitalización"],
-                })
-
-        output_df = pd.DataFrame(all_preds)
-        output_df.to_csv(output_file, index=False)
-        print(f"Wrote predictions to {output_file}")
-        return output_df
+        return final_df
 
     def predict_and_reconstruct(self, raw_sentence: str) -> str:
         """
@@ -483,9 +432,9 @@ class RNNPunctuationCapitalizationModel:
         """
         if not self.is_fitted:
             raise ValueError("Model must be trained before prediction")
-
+        
         tokenizer_fast = self.tokenizer_fast
-
+        
         # 1) Tokenize (with word-ids for alignment)
         enc = tokenizer_fast(
             raw_sentence.lower().split(),  # split into words so word_ids works
@@ -495,7 +444,7 @@ class RNNPunctuationCapitalizationModel:
             padding=True,
             truncation=True,
         )
-
+        
         input_ids = enc["input_ids"].to(self.device)
         word_ids = enc.word_ids(batch_index=0)  # list of length L
 
@@ -572,7 +521,7 @@ class RNNPunctuationCapitalizationModel:
         """Save trained model"""
         if not self.is_fitted:
             raise ValueError("Model must be trained before saving")
-
+        
         model_data = {
             "model_state_dict": self.model.state_dict(),
             "model_config": {
@@ -601,7 +550,7 @@ class RNNPunctuationCapitalizationModel:
     def load_model(self, filepath: str):
         """Load trained model"""
         model_data = torch.load(filepath, map_location=self.device)
-
+        
         # Update configs
         config = model_data["model_config"]
         self.embed_dim = config["embed_dim"]
@@ -612,11 +561,11 @@ class RNNPunctuationCapitalizationModel:
         self.num_final = config["num_final"]
         self.num_cap = config["num_cap"]
         self.bidirectional = config["bidirectional"]
-
+        
         train_config = model_data["training_config"]
         self.learning_rate = train_config["learning_rate"]
         self.batch_size = train_config["batch_size"]
-
+        
         # Recreate model
         self.model = JointPunctCapitalModel(
             vocab_size=config["vocab_size"],
@@ -629,18 +578,18 @@ class RNNPunctuationCapitalizationModel:
             dropout=self.dropout,
             bidirectional=self.bidirectional
         ).to(self.device)
-
+        
         # Load state
         self.model.load_state_dict(model_data["model_state_dict"])
         self.is_fitted = model_data["is_fitted"]
-
+        
         print(f"Model loaded from {filepath}")
 
 def evaluate_model_rnn(rnn: RNNPunctuationCapitalizationModel, test_sentences: List[str], batch_size: Optional[int] = None):
     """
     Evaluate the RNNPunctuationCapitalizationModel on test data with labels.
     Prints classification reports and F1 scores for each task.
-
+    
     Args:
         model: Trained RNNPunctuationCapitalizationModel instance.
         test_sentences: List of raw test sentences (strings).
@@ -648,7 +597,7 @@ def evaluate_model_rnn(rnn: RNNPunctuationCapitalizationModel, test_sentences: L
     """
     if not rnn.is_fitted:
         raise ValueError("Model must be trained before evaluation")
-
+    
     rnn.model.eval()
     device = rnn.device
     bs = batch_size or rnn.batch_size
