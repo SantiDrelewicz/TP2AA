@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 import random
 import argparse
@@ -52,10 +53,18 @@ def main(mode: str, which: str):
             rnn_model = RNNPunctuationCapitalizationModel(bidirectional=bidirectional)
             filename = "trained_birnn_model.pt" if bidirectional else "trained_rnn_model.pt"
             rnn_model.load_model(filename)
+
             # evaluate_model_rnn(rnn_model, test_sentences)
-            print(rnn_model.predict_and_reconstruct("pasado mañana"))
-            print(rnn_model.predict_and_reconstruct("estás asustado"))
-            print(rnn_model.predict_and_reconstruct("cindy espero que estes muy orgullosa de lo que haz hecho"))
+            # print(rnn_model.predict_and_reconstruct("pasado mañana"))
+            # print(rnn_model.predict_and_reconstruct("estás asustado"))
+            # print(rnn_model.predict_and_reconstruct("cindy espero que estes muy orgullosa de lo que haz hecho"))
+
+            input_csv = "datos_test.csv"
+            output_csv = "predicted_output.csv"
+
+            input_df = pd.read_csv(input_csv)
+            rnn_model.predict_to_csv_from_dataframe(input_df, output_file=output_csv)
+
     else:
         raise ValueError(f"Unknown mode: {mode}. Use 'train' or 'test'.")
 

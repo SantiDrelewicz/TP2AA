@@ -372,77 +372,58 @@ class RNNPunctuationCapitalizationModel:
         
         return self.predict_and_reconstruct(text)
 
-    def predict_to_csv(self, test_data: List[str], output_file: str = "predictions.csv") -> pd.DataFrame:
-        """Predict on test data and save to CSV"""
+    def predict_to_csv_from_dataframe(self, input_df: pd.DataFrame, output_file: str = "predictions.csv") -> pd.DataFrame:
+        """
+        Predict on a CSV-like dataframe (with instancia_id, token_id, token)
+        and save predictions to new CSV in required format.
+        """
         if not self.is_fitted:
             raise ValueError("Model must be trained before prediction")
-        
-        print("Processing test data...")
-        test_instances = self._prepare_data(test_data)
-        
+
+        # Group the tokens into sentences
+        sentences = []
+        instance_ids = []
+        for inst_id, group in input_df.groupby("instancia_id"):
+            sentence = " ".join(group["token"].tolist())
+            sentences.append(sentence)
+            instance_ids.append(inst_id)
+
+        # Run predictions
         self.model.eval()
-        output_rows = []
+        all_preds = []
 
-        # For metric accumulation
-        all_init_trues, all_init_preds = [], []
-        all_final_trues, all_final_preds = [], []
-        all_cap_trues, all_cap_preds = [], []
+        for inst_id, sentence in zip(instance_ids, sentences):
+            tokens = self.tokenizer.tokenize(sentence.lower())
+            input_ids = torch.tensor([self.tokenizer.convert_tokens_to_ids(tokens)], device=self.device)
 
-        for inst_id, instance in enumerate(test_instances):
-            # prepare inputs
-            input_ids = (
-                torch.tensor(instance["input_ids"], dtype=torch.long).unsqueeze(0).to(self.device)
-            )
             with torch.no_grad():
                 init_logits, final_logits, cap_logits = self.model(input_ids)
 
-            # get token-level preds
             init_pred = init_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
             final_pred = final_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
-            cap_pred = cap_logits.argmax(dim=-1).squeeze(0).cpu().tolist()
+            cap_pred = cap_logits.argmax(dim=-1).cpu().tolist()
 
-            # retrieve true labels
-            init_true = instance["init_labels"]
-            final_true = instance["final_labels"]
-            cap_true = instance["cap_labels"]
-            tokens = instance["tokens"]
+            # Re-tokenize with wordpiece for alignment
+            subtokens = self.tokenizer.convert_ids_to_tokens(input_ids.squeeze(0).cpu().tolist())
 
-            # sanity check
-            assert len(init_pred) == len(init_true) == len(tokens)
+            for token_idx, (sub, i_p, f_p, c_p) in enumerate(zip(subtokens, init_pred, final_pred, cap_pred)):
+                # CSV requires comma in quotes
+                final_symbol = self.idx_map_final[f_p]
+                if final_symbol == ",":
+                    final_symbol = '","'
 
-            # accumulate and record
-            for token_idx, token in enumerate(tokens):
-                # append to CSV rows
-                output_rows.append({
+                all_preds.append({
                     "instancia_id": inst_id,
                     "token_id": token_idx,
-                    "token": token,
-                    "punt_inicial": self.idx_map_init[init_pred[token_idx]],
-                    "punt_final": self.idx_map_final[final_pred[token_idx]],
-                    "capitalizacion": cap_pred[token_idx],
+                    "token": sub,
+                    "punt_inicial": self.idx_map_init[i_p],
+                    "punt_final": final_symbol,
+                    "capitalización": c_p,
                 })
-                # accumulate for metrics
-                all_init_trues.append(init_true[token_idx])
-                all_init_preds.append(init_pred[token_idx])
-                all_final_trues.append(final_true[token_idx])
-                all_final_preds.append(final_pred[token_idx])
-                all_cap_trues.append(cap_true[token_idx])
-                all_cap_preds.append(cap_pred[token_idx])
 
-        # build and save DataFrame
-        output_df = pd.DataFrame(output_rows)
+        output_df = pd.DataFrame(all_preds)
         output_df.to_csv(output_file, index=False)
-        print(f"Wrote {output_file}")
-
-        # compute and print macro-F1 for each task
-        f1_init = f1_score(all_init_trues, all_init_preds, average="macro", zero_division=0)
-        f1_final = f1_score(all_final_trues, all_final_preds, average="macro", zero_division=0)
-        f1_cap = f1_score(all_cap_trues, all_cap_preds, average="macro", zero_division=0)
-
-        print(f"Test set performance:")
-        print(f"  • Initial punctuation F1-macro: {f1_init:.4f}")
-        print(f"  • Final punctuation   F1-macro: {f1_final:.4f}")
-        print(f"  • Capitalization      F1-macro: {f1_cap:.4f}")
+        print(f"Wrote predictions to {output_file}")
 
         return output_df
 
